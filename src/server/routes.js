@@ -3,13 +3,13 @@ import { template } from 'lodash';
 import fs from 'fs';
 import pdf from 'html-pdf';
 import moment from 'moment';
-import request from 'request';
+import proxy from 'express-http-proxy';
 
 import pages from './pages';
 import controllers from './controllers';
 import { maxAge } from './middlewares';
 import { logger } from './logger';
-import { translateApiUrl } from '../lib/utils';
+import { getBaseApiUrl } from '../lib/utils';
 import email from './lib/email';
 
 export default (server, app) => {
@@ -25,26 +25,17 @@ export default (server, app) => {
 
   // NOTE: in production and staging environment, this is currently not used
   // we use Cloudflare workers to route the request directly to the API
-  server.all('/api/*', (req, res) => {
-    const apiUrl = translateApiUrl(req.url);
-    logger.debug('>>> API request %s', apiUrl);
-    req
-      .pipe(
-        request(apiUrl, {
-          followRedirect: false,
-          headers: {
-            'oc-frontend-api-proxy': '1',
-            'oc-frontend-ip': req.ip,
-            'X-Forwarded-For': req.ip,
-          },
-        }),
-      )
-      .on('error', e => {
-        logger.error('>>> Error calling API %s', apiUrl, e);
-        res.status(500).send(e);
-      })
-      .pipe(res);
-  });
+  server.use(
+    '/api',
+    proxy(getBaseApiUrl({ internal: true }), {
+      proxyReqPathResolver: req => {
+        const [path, queryString] = req.url.split('?');
+        return `${path.replace(/api/, '/')}?${queryString || ''}${queryString ? '&' : ''}api_key=${
+          process.env.API_KEY
+        }`;
+      },
+    }),
+  );
 
   /**
    * Prevent indexation from search engines
